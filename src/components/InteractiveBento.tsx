@@ -41,7 +41,7 @@ export const InteractiveBento: React.FC<InteractiveBentoProps> = ({ onOpenReserv
               <div className="flex items-center justify-between border-b border-[#D4A346]/20 pb-4 mb-6">
                 <span className="text-[11px] font-mono text-[#D4A346] tracking-widest uppercase flex items-center gap-2">
                   <Sliders className="w-4 h-4 text-[#D4A346]" />
-                  ESTATE EXPERIENCE CONFIGURATOR
+                  ESTATE CELEBRATION PLANNER
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full bg-[#D4A346]/20 text-[#D4A346] text-[10px] font-mono font-bold">
                   PLANNER LAB
