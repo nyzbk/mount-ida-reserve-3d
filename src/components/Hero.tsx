@@ -1,65 +1,88 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { GlassWater, ChevronRight, ChevronDown } from 'lucide-react';
+import React, { useEffect, useRef, useState, useTransition } from 'react';
+import { useScroll, useSpring, useTransform, motion } from 'framer-motion';
+import { ArrowUpRight, Compass, ShieldCheck, Sparkles } from 'lucide-react';
 
 interface HeroProps {
-  totalFrames?: number;
   onOpenReservation: () => void;
 }
 
-export const Hero: React.FC<HeroProps> = ({
-  totalFrames = 60,
-  onOpenReservation
-}) => {
+const TOTAL_FRAMES = 240;
+
+export const Hero: React.FC<HeroProps> = ({ onOpenReservation }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imagesRef = useRef<HTMLImageElement[]>([]);
   const currentFrameRef = useRef<number>(1);
+  const [, startTransition] = useTransition();
 
-  const [, setCurrentFrame] = useState<number>(1);
-  const [scrollProgress, setScrollProgress] = useState<number>(0);
-  const [activeChapter, setActiveChapter] = useState<string>('Sunlit Vineyard Hills & Manor Estate');
-  const [isLoaded, setIsLoaded] = useState<boolean>(false);
+  const [, setIsLoaded] = useState(false);
+  const [loadCount, setLoadCount] = useState(0);
 
+  // Jack Roberts spring physics: stiffness: 100, damping: 30
+  const { scrollYProgress } = useScroll({
+    target: containerRef,
+    offset: ['start start', 'end end'],
+  });
+
+  const smoothProgress = useSpring(scrollYProgress, {
+    stiffness: 100,
+    damping: 30,
+    restDelta: 0.0001,
+  });
+
+  // Staged narrative typography opacities across 240 frames
+  const stage1Opacity = useTransform(smoothProgress, [0, 0.18, 0.26], [1, 1, 0]);
+  const stage1Y = useTransform(smoothProgress, [0, 0.22], [0, -35]);
+
+  const stage2Opacity = useTransform(smoothProgress, [0.26, 0.34, 0.46, 0.54], [0, 1, 1, 0]);
+  const stage2Y = useTransform(smoothProgress, [0.26, 0.34, 0.46, 0.54], [35, 0, 0, -35]);
+
+  const stage3Opacity = useTransform(smoothProgress, [0.54, 0.62, 0.74, 0.82], [0, 1, 1, 0]);
+  const stage3Y = useTransform(smoothProgress, [0.54, 0.62, 0.74, 0.82], [35, 0, 0, -35]);
+
+  const stage4Opacity = useTransform(smoothProgress, [0.82, 0.90, 1], [0, 1, 1]);
+  const stage4Y = useTransform(smoothProgress, [0.82, 0.90], [35, 0]);
+
+  // Frame 1 immediate load + progressive background batching
   useEffect(() => {
-    const total = totalFrames;
-    const imgs: HTMLImageElement[] = new Array(total);
+    const imgs: HTMLImageElement[] = new Array(TOTAL_FRAMES);
 
-    // 1. Immediately fetch Frame 1 (<100ms first paint)
     const firstImg = new Image();
-    firstImg.src = `/frames/frame_0001.webp?v=fast-v2`;
+    firstImg.src = `/frames/frame_0001.webp?v=240`;
     firstImg.onload = () => {
       imgs[0] = firstImg;
       setIsLoaded(true);
+      setLoadCount(1);
       renderFrame(1);
 
-      // 2. Progressive non-blocking preload for frames 2..total in small smooth batches
-      let nextIdx = 2;
-      const loadNextBatch = () => {
-        const batchSize = 6;
-        for (let b = 0; b < batchSize && nextIdx <= total; b++, nextIdx++) {
-          const idx = nextIdx;
+      let nextIndex = 2;
+      const loadBatch = () => {
+        const batchSize = 10;
+        for (let i = 0; i < batchSize && nextIndex <= TOTAL_FRAMES; i++, nextIndex++) {
+          const idx = nextIndex;
           const img = new Image();
-          const frameStr = String(idx).padStart(4, '0');
-          img.src = `/frames/frame_${frameStr}.webp?v=fast-v2`;
+          const frameNum = String(idx).padStart(4, '0');
+          img.src = `/frames/frame_${frameNum}.webp?v=240`;
           img.onload = () => {
+            imgs[idx - 1] = img;
+            setLoadCount((prev) => prev + 1);
             if (currentFrameRef.current === idx) {
               renderFrame(idx);
             }
           };
           imgs[idx - 1] = img;
         }
-        if (nextIdx <= total) {
-          setTimeout(loadNextBatch, 15);
+        if (nextIndex <= TOTAL_FRAMES) {
+          setTimeout(loadBatch, 15);
         }
       };
-      loadNextBatch();
-    };
-    firstImg.onerror = () => {
-      setIsLoaded(true);
+      loadBatch();
     };
     imgs[0] = firstImg;
-    imagesRef.current = imgs;}, [totalFrames]);
+    imagesRef.current = imgs;
+  }, []);
 
+  // Canvas COVER rendering algorithm
   const renderFrame = (frameIndex: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -68,248 +91,214 @@ export const Hero: React.FC<HeroProps> = ({
 
     let img = imagesRef.current[frameIndex - 1];
     if (!img || !img.complete || img.naturalWidth === 0) {
-      for (let offset = 1; offset < totalFrames; offset++) {
-        const prev = imagesRef.current[frameIndex - 1 - offset];
-        if (prev && prev.complete && prev.naturalWidth > 0) {
-          img = prev;
-          break;
-        }
-        const next = imagesRef.current[frameIndex - 1 + offset];
-        if (next && next.complete && next.naturalWidth > 0) {
-          img = next;
+      for (let i = frameIndex - 1; i >= 0; i--) {
+        if (imagesRef.current[i] && imagesRef.current[i].complete && imagesRef.current[i].naturalWidth > 0) {
+          img = imagesRef.current[i];
           break;
         }
       }
     }
-    if (img && img.complete) {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
+    if (!img || !img.complete || img.naturalWidth === 0) return;
 
-      if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-        canvas.width = Math.round(w * dpr);
-        canvas.height = Math.round(h * dpr);
-      }
+    const dpr = window.devicePixelRatio || 1;
+    const cw = canvas.clientWidth;
+    const ch = canvas.clientHeight;
 
-      ctx.save();
-      ctx.scale(dpr, dpr);
-
-      const naturalW = img.naturalWidth || 1920;
-      const naturalH = img.naturalHeight || 1080;
-      const imgRatio = naturalW / naturalH;
-      const canvasRatio = w / h;
-
-      let drawW: number;
-      let drawH: number;
-      let drawX: number;
-      let drawY: number;
-
-      if (canvasRatio > imgRatio) {
-        drawW = w;
-        drawH = w / imgRatio;
-        drawX = 0;
-        drawY = (h - drawH) / 2;
-      } else {
-        drawH = h;
-        drawW = h * imgRatio;
-        drawX = (w - drawW) / 2;
-        drawY = 0;
-      }
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, drawX, drawY, drawW, drawH);
-      ctx.restore();
+    if (canvas.width !== cw * dpr || canvas.height !== ch * dpr) {
+      canvas.width = cw * dpr;
+      canvas.height = ch * dpr;
     }
 
-    if (frameIndex <= 60) {
-      setActiveChapter('Sunlit Vineyard Hills & Manor Estate');
-    } else if (frameIndex <= 120) {
-      setActiveChapter('The Grand Lodge & Waterfront Gazebo');
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, cw, ch);
+
+    const imgRatio = img.naturalWidth / img.naturalHeight;
+    const canvasRatio = cw / ch;
+
+    let drawW: number;
+    let drawH: number;
+    let offsetX: number;
+    let offsetY: number;
+
+    if (canvasRatio > imgRatio) {
+      drawW = cw;
+      drawH = cw / imgRatio;
+      offsetX = 0;
+      offsetY = (ch - drawH) / 2;
     } else {
-      setActiveChapter('Oak Aging Cellars & Sunset Veranda');
+      drawW = ch * imgRatio;
+      drawH = ch;
+      offsetX = (cw - drawW) / 2;
+      offsetY = 0;
     }
+
+    ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+    ctx.restore();
   };
 
+  // Sync canvas with spring physics
   useEffect(() => {
-    const handleScroll = () => {
-      const container = containerRef.current;
-      if (!container) return;
-
-      const rect = container.getBoundingClientRect();
-      const totalScrollable = container.offsetHeight - window.innerHeight;
-      if (totalScrollable <= 0) return;
-
-      const scrolled = Math.max(0, -rect.top);
-      const progress = Math.min(1, Math.max(0, scrolled / totalScrollable));
-      setScrollProgress(progress);
-
+    const unsubscribe = smoothProgress.on('change', (v) => {
       const targetFrame = Math.min(
-        totalFrames,
-        Math.max(1, Math.floor(progress * (totalFrames - 1)) + 1)
+        TOTAL_FRAMES,
+        Math.max(1, Math.floor(v * (TOTAL_FRAMES - 1)) + 1)
       );
-
       if (targetFrame !== currentFrameRef.current) {
         currentFrameRef.current = targetFrame;
-        setCurrentFrame(targetFrame);
-        renderFrame(targetFrame);
+        startTransition(() => {
+          renderFrame(targetFrame);
+        });
       }
-    };
+    });
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', () => renderFrame(currentFrameRef.current), { passive: true });
-    renderFrame(1);
+    return () => unsubscribe();
+  }, [smoothProgress]);
 
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
+  // Window resize handler
+  useEffect(() => {
+    const handleResize = () => {
+      renderFrame(currentFrameRef.current);
     };
-  }, [totalFrames]);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   return (
-    <section ref={containerRef} className="relative h-[450vh] w-full bg-[#0a0b0d] overflow-x-clip">
-      {/* Sticky Canvas Screen */}
-      <div className="sticky top-0 h-screen w-full overflow-hidden flex items-center justify-center">
+    <div ref={containerRef} className="relative h-[400vh] bg-[#15221B] text-[#FBF8F1]">
+      {/* Sticky 100vh Fullscreen Viewport */}
+      <div className="sticky top-0 h-screen w-full overflow-hidden flex flex-col justify-between">
+        {/* Background Neural Canvas */}
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700"
-          style={{ opacity: isLoaded ? 1 : 0.4 }}
+          className="absolute inset-0 w-full h-full object-cover z-0 pointer-events-none"
         />
 
-        {/* Ambient Darkened Gradient Masks */}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0a0b0d] via-transparent to-[#0a0b0d]/75 pointer-events-none" />
+        {/* Cinematic Pastoral Virginia Forest & Twilight Vignette */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#15221B]/95 via-[#15221B]/40 to-[#15221B]/80 pointer-events-none z-10" />
 
-        {/* Narrative Layers */}
-        <div className="relative z-10 w-full max-w-7xl mx-auto px-6 h-full flex flex-col justify-between py-24 md:py-28 pointer-events-none">
-          {/* Top Status */}
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pointer-events-auto">
-            <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full border border-[#c99750]/35 bg-[#12141c]/85 backdrop-blur-md">
-              <span className="w-2 h-2 rounded-full bg-[#c99750] animate-pulse" />
-              <span className="text-[11px] uppercase tracking-[0.22em] text-[#f5f1eb] font-medium">
-                {activeChapter}
-              </span>
-            </div>
+        {/* 12-Column Architectural Hairline Grid Overlay */}
+        <div className="absolute inset-0 pointer-events-none z-15 opacity-[0.08] grid grid-cols-6 md:grid-cols-12 max-w-[1600px] mx-auto px-6">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="border-r border-[#D4A346] h-full" />
+          ))}
+        </div>
 
-            <div className="hidden sm:flex items-center gap-6 text-xs tracking-wider text-[#a0adc2]">
-              <div className="flex items-center gap-2">
-                <GlassWater className="w-4 h-4 text-[#c99750]" />
-                <span>Estate Grown Wine & On-Site Brewery</span>
-              </div>
-              <div className="w-1 h-1 rounded-full bg-[#3e4657]" />
-              <span>5,000 Pristine Albemarle Acres</span>
-            </div>
+        {/* Top Telemetry Header */}
+        <div className="relative z-20 pt-24 px-6 md:px-12 flex justify-between items-start max-w-[1600px] mx-auto w-full">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#D4A346]/15 border border-[#D4A346]/30 text-[#D4A346] text-[11px] font-mono tracking-widest uppercase">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#D4A346] animate-ping" />
+              5,000-ACRE VIRGINIA RESERVE
+            </span>
+            <span className="hidden md:inline text-[11px] font-mono text-[#8C9A91]">
+              6903 BLENHEIM RD • SCOTTSVILLE, VA
+            </span>
           </div>
 
-          {/* Central Narrative */}
-          <div className="my-auto max-w-3xl">
-            {scrollProgress < 0.35 && (
-              <div className="space-y-6 animate-in fade-in duration-700 pointer-events-auto">
-                <div className="inline-block">
-                  <span className="text-xs uppercase tracking-[0.3em] text-[#c99750] font-semibold border-b border-[#c99750]/40 pb-1">
-                    Charlottesville Historic Vineyard & Estate
-                  </span>
-                </div>
-                <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-[#f5f1eb] leading-[1.08]">
-                  Five Thousand Acres. <br />
-                  <span className="wine-gradient-text">Timeless Virginia</span> Splendor.
-                </h1>
-                <p className="text-sm sm:text-base md:text-lg text-[#cbd6e2] font-light max-w-2xl leading-relaxed">
-                  Discover a secluded pastoral sanctuary in Albemarle County. Sun-drenched vineyards, an on-site craft brewery, monumental cedar event lodges, and private luxury accommodations.
-                </p>
-                <div className="flex flex-wrap items-center gap-4 pt-2">
-                  <button
-                    onClick={onOpenReservation}
-                    className="glass-button px-8 py-3.5 rounded-full text-xs tracking-[0.2em] uppercase font-bold text-[#0a0b0d] bg-[#c99750] hover:bg-[#e5b672] transition-all flex items-center gap-2 shadow-xl"
-                  >
-                    <span>Reserve Tasting Experience</span>
-                    <ChevronRight className="w-4 h-4 text-[#0a0b0d]" />
-                  </button>
-                  <a
-                    href="#experiences"
-                    className="px-6 py-3.5 rounded-full border border-[#343e50] bg-[#141724]/60 backdrop-blur-md text-xs tracking-[0.18em] uppercase text-[#f5f1eb] hover:border-[#c99750]/60 transition-all"
-                  >
-                    Explore Venues & Grounds
-                  </a>
-                </div>
-              </div>
-            )}
-
-            {scrollProgress >= 0.35 && scrollProgress < 0.70 && (
-              <div className="space-y-6 animate-in fade-in duration-700 pointer-events-auto">
-                <span className="text-xs uppercase tracking-[0.3em] text-[#c99750] font-semibold border-b border-[#c99750]/40 pb-1">
-                  The Lodge & Waterfront Celebrations
-                </span>
-                <h2 className="font-display text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-[#f5f1eb] leading-tight">
-                  Grand Cedar Architecture. <br />
-                  <span className="wine-gradient-text">Lakeside</span> Vows.
-                </h2>
-                <p className="text-sm sm:text-base text-[#cbd6e2] max-w-xl leading-relaxed">
-                  Whether hosting a 300-guest celebration in The Lodge or an intimate twilight dinner in The Historic Event Barn, Mount Ida provides an unforgettable backdrop.
-                </p>
-                <div className="grid grid-cols-3 gap-4 pt-2 max-w-md">
-                  <div className="border border-[#262e3e] bg-[#10141e]/80 p-3 rounded-xl backdrop-blur-md">
-                    <span className="block text-[10px] uppercase tracking-widest text-[#8c9cae]">Domain</span>
-                    <span className="text-lg font-bold text-[#f5f1eb]">5,000 Ac</span>
-                  </div>
-                  <div className="border border-[#262e3e] bg-[#10141e]/80 p-3 rounded-xl backdrop-blur-md">
-                    <span className="block text-[10px] uppercase tracking-widest text-[#8c9cae]">Venues</span>
-                    <span className="text-lg font-bold text-[#f5f1eb]">4 Settings</span>
-                  </div>
-                  <div className="border border-[#262e3e] bg-[#10141e]/80 p-3 rounded-xl backdrop-blur-md">
-                    <span className="block text-[10px] uppercase tracking-widest text-[#8c9cae]">Ratings</span>
-                    <span className="text-lg font-bold text-[#c99750]">Award-Winning</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {scrollProgress >= 0.70 && (
-              <div className="space-y-6 animate-in fade-in duration-700 pointer-events-auto">
-                <span className="text-xs uppercase tracking-[0.3em] text-[#c99750] font-semibold border-b border-[#c99750]/40 pb-1">
-                  Artisanal Wine & Craft Brews
-                </span>
-                <h2 className="font-display text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-[#f5f1eb] leading-tight">
-                  Hand-Harvested Fruit. <br />
-                  <span className="wine-gradient-text">Small-Batch</span> Excellence.
-                </h2>
-                <p className="text-sm sm:text-base text-[#cbd6e2] max-w-xl leading-relaxed">
-                  French oak aging, estate viticulture, and mountain spring water fuel our award-winning wine and beer portfolio.
-                </p>
-                <div className="pt-2">
-                  <button
-                    onClick={onOpenReservation}
-                    className="glass-button px-8 py-3.5 rounded-full text-xs tracking-[0.2em] uppercase font-bold text-[#f5f1eb] border border-[#c99750] flex items-center gap-2"
-                  >
-                    <span>Reserve Private Tasting</span>
-                    <ChevronRight className="w-4 h-4 text-[#c99750]" />
-                  </button>
-                </div>
-              </div>
-            )}
+          <div className="text-right font-mono text-[11px] text-[#8C9A91]">
+            <div className="text-[#D4A346] font-semibold">240-FRAME PASTORAL SCAN</div>
+            <div>BUFFER: {loadCount}/{TOTAL_FRAMES} FRAMES ({Math.round((loadCount / TOTAL_FRAMES) * 100)}%)</div>
           </div>
+        </div>
 
-          {/* Bottom Bar */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pointer-events-auto border-t border-[#1e2330] pt-4">
-            <div className="flex items-center gap-3">
-              <span className="text-xs uppercase tracking-widest text-[#8c9cae]">Estate Walkthrough</span>
-              <div className="w-32 sm:w-48 h-1.5 rounded-full bg-[#1e2330] overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-[#c99750] to-[#e5b672] transition-all duration-150"
-                  style={{ width: `${Math.round(scrollProgress * 100)}%` }}
-                />
-              </div>
-              <span className="text-xs font-mono text-[#c99750]">
-                {Math.round(scrollProgress * 100)}%
-              </span>
+        {/* Center Dynamic Staged Narrative */}
+        <div className="relative z-20 px-6 md:px-12 max-w-[1600px] mx-auto w-full my-auto pointer-events-none">
+          {/* Stage 1: 5,000-Acre Virginia Pastoral Sanctuary */}
+          <motion.div
+            style={{ opacity: stage1Opacity, y: stage1Y }}
+            className="max-w-4xl"
+          >
+            <div className="text-[12px] font-mono tracking-[0.25em] text-[#D4A346] uppercase mb-4 flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-[#D4A346]" />
+              HISTORIC ALBEMARLE COUNTY ESTATE
             </div>
+            <h1 className="font-['Bodoni_Moda',serif] text-[48px] md:text-[84px] leading-[0.92] tracking-tight text-[#FBF8F1]">
+              Virginia grandeur unfolding across 5,000 acres.
+            </h1>
+            <p className="mt-6 text-[16px] md:text-[20px] text-[#8C9A91] max-w-2xl font-light leading-relaxed font-['Jost',sans-serif]">
+              A majestic private country estate south of Charlottesville. Rolling pastures, private cedar lodges, championship equestrian arenas, craft brewery, and Virginia's most celebrated wedding venues.
+            </p>
+          </motion.div>
 
-            <div className="flex items-center gap-2 text-xs tracking-widest uppercase text-[#8c9cae] animate-bounce">
-              <span>Scroll to explore estate</span>
-              <ChevronDown className="w-3.5 h-3.5 text-[#c99750]" />
+          {/* Stage 2: Historic Manor, Tasting Lodge & Craft Brewery */}
+          <motion.div
+            style={{ opacity: stage2Opacity, y: stage2Y }}
+            className="max-w-3xl"
+          >
+            <div className="text-[12px] font-mono tracking-[0.25em] text-[#D4A346] uppercase mb-4 flex items-center gap-2">
+              <Compass className="w-3.5 h-3.5 text-[#D4A346]" />
+              ESTATE BREWERY, VINEYARD & WOOD-FIRED KITCHEN
             </div>
+            <h2 className="font-['Bodoni_Moda',serif] text-[44px] md:text-[76px] leading-[0.92] text-[#FBF8F1]">
+              Pint by the hearth. Glass on the terrace.
+            </h2>
+            <p className="mt-6 text-[16px] md:text-[19px] text-[#8C9A91] font-light leading-relaxed font-['Jost',sans-serif]">
+              Award-winning craft ales brewed with mountain spring water, estate-grown wines, and artisanal flatbreads served with panoramic vistas across the Blue Ridge mountains.
+            </p>
+          </motion.div>
+
+          {/* Stage 3: World-Class Equestrian & Grand Event Center */}
+          <motion.div
+            style={{ opacity: stage3Opacity, y: stage3Y }}
+            className="max-w-3xl"
+          >
+            <div className="text-[12px] font-mono tracking-[0.25em] text-[#D4A346] uppercase mb-4 flex items-center gap-2">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#D4A346]" />
+              DESTINATION CELEBRATIONS & EQUESTRIAN
+            </div>
+            <h2 className="font-['Bodoni_Moda',serif] text-[44px] md:text-[76px] leading-[0.92] text-[#FBF8F1]">
+              Unrivaled scale for up to 400 guests.
+            </h2>
+            <p className="mt-6 text-[16px] md:text-[19px] text-[#8C9A91] font-light leading-relaxed font-['Jost',sans-serif]">
+              Spectacular high-timber ballrooms, stone fireplaces, private bridal chalets, and full-boarding hunter/jumper equestrian training facilities.
+            </p>
+          </motion.div>
+
+          {/* Stage 4: Reserve Your Manor Stay or Celebration */}
+          <motion.div
+            style={{ opacity: stage4Opacity, y: stage4Y }}
+            className="max-w-3xl pointer-events-auto"
+          >
+            <div className="text-[12px] font-mono tracking-[0.25em] text-[#D4A346] uppercase mb-4">
+              EXPERIENCE THE RESERVE
+            </div>
+            <h2 className="font-['Bodoni_Moda',serif] text-[44px] md:text-[76px] leading-[0.92] text-[#FBF8F1]">
+              Escape to Mount Ida.
+            </h2>
+            <p className="mt-6 text-[16px] md:text-[19px] text-[#8C9A91] font-light leading-relaxed font-['Jost',sans-serif]">
+              Reserve luxury estate manor homes, schedule a wedding tour, or join us at the Tasting Room & Taphouse this weekend.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center gap-4">
+              <button
+                onClick={onOpenReservation}
+                className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-xl bg-[#D4A346] text-[#15221B] font-semibold text-[14px] uppercase tracking-wider transition-all duration-300 hover:bg-[#e4b55c] shadow-lg shadow-[#D4A346]/25 hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <span>Reserve Experience or Tour</span>
+                <ArrowUpRight className="w-4 h-4 transition-transform group-hover:translate-x-1 group-hover:-translate-y-1" />
+              </button>
+              <a
+                href="tel:4349604655"
+                className="px-6 py-4 rounded-xl border border-[#D4A346]/30 text-[#FBF8F1] font-mono text-[13px] hover:bg-[#D4A346]/10 transition-colors"
+              >
+                (434) 960-4655
+              </a>
+            </div>
+          </motion.div>
+        </div>
+
+        {/* Bottom Status Ribbon */}
+        <div className="relative z-20 pb-8 px-6 md:px-12 max-w-[1600px] mx-auto w-full flex justify-between items-end border-t border-[#D4A346]/15 pt-4 text-[12px] font-mono text-[#8C9A91]">
+          <div className="flex items-center gap-6">
+            <span className="text-[#D4A346]">5,000 CONTIGUOUS ACRES</span>
+            <span className="hidden md:inline">CHARLOTTESVILLE • SCOTTSVILLE • ALBEMARLE COUNTY</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span>SCROLL TO EXPLORE GROUNDS</span>
+            <span className="animate-bounce">↓</span>
           </div>
         </div>
       </div>
-    </section>
+    </div>
   );
 };
